@@ -1,6 +1,7 @@
 from diffusers import AutoencoderKL
 from torch.utils.data import DataLoader
 from dataset import ImageDataset
+from tqdm import tqdm
 import torch
 
 ## Load the VAE
@@ -13,7 +14,7 @@ vae = AutoencoderKL.from_pretrained(vae_model_id, subfolder="vae")
 vae = vae.to("cuda:3")  # move to GPU if available
 
 ## Prepare the dataset
-dataset = ImageDataset("./data/train/Papaya")
+dataset = ImageDataset("./data/train/HR_Fingerprints")
 dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
 
 ## Define optimizer and loss
@@ -32,7 +33,7 @@ for epoch in range(10):  # adjust epochs
         
         # Compute loss
         loss = criterion(recon, batch)
-        print("Epoch:",epoch," Loss:",loss.item())
+        print("Training Epoch",epoch," Loss:",loss.item())
         
         # Backprop
         optimizer.zero_grad()
