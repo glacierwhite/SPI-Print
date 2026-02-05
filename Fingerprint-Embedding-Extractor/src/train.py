@@ -1,189 +1,88 @@
 import sys
 if './' not in sys.path:
 	sys.path.append('./')
-     
-import logging
-import time
-import os
 
-logging.basicConfig(format='%(asctime)s | %(levelname)s : %(message)s', level=logging.INFO)
-logger = logging.getLogger(__name__)
-	
-from models.vision_transformer import VisionTransformer
-from torch.utils.tensorboard import SummaryWriter
-from options import Options
 import torch
-from running import setup, SupervisedRunner, NEG_METRICS, validate, check_progress
+import torch.nn as nn
+from models.fingervit import FingerViT
+from models.arcface import ArcFace
+from dataset import FingerprintDataset
 from torch.utils.data import DataLoader
-from torchvision import datasets, transforms
-from models.loss import get_loss_module
-from optimizers import get_optimizer
 from tqdm import tqdm
-import utils
 
-def main(config):
+## Hyperparmeters
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-    total_epoch_time = 0
-    total_eval_time = 0
+BATCH = 64
+EPOCHS = 50
+LR = 3e-4
+EMB_DIM = 512
 
-    total_start_time = time.time()
+## Build data
+train_set = FingerprintDataset("./data/train", train=True)
+val_set   = FingerprintDataset("./data/val", train=False)
 
-    # Add file logging besides stdout
-    file_handler = logging.FileHandler(os.path.join(config['output_dir'], 'output.log'))
-    logger.addHandler(file_handler)
+train_loader = DataLoader(train_set, batch_size=64, shuffle=True, num_workers=4)
+val_loader   = DataLoader(val_set, batch_size=64, shuffle=False)
 
-    logger.info('Running:\n{}\n'.format(' '.join(sys.argv)))  # command used to run
+NUM_CLASSES = len(train_set.id_map)
 
-    if config['seed'] is not None:
-        torch.manual_seed(config['seed'])
+## Build model
+model = FingerViT(emb_dim=EMB_DIM).to(DEVICE)
+arcface = ArcFace(EMB_DIM, NUM_CLASSES).to(DEVICE)
 
-    device = torch.device('cuda' if (torch.cuda.is_available() and config['gpu'] != '-1') else 'cpu')
-    logger.info("Using device: {}".format(device))
-    if device.type == "cuda":
-        logger.info("Device index: {}".format(torch.cuda.current_device()))
+optimizer = torch.optim.AdamW(
+    list(model.parameters()) + list(arcface.parameters()),
+    lr=LR, weight_decay=1e-4
+)
 
-    # Define transformations for preprocessing the images
-    transform = transforms.Compose([
-        transforms.Resize((config['image_size'], config['image_size'])),   # resize images
-        transforms.ToTensor(),           # convert PIL image to PyTorch tensor
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], 
-                            std=[0.229, 0.224, 0.225]) # normalize like ImageNet
-    ])
+criterion = nn.CrossEntropyLoss()
 
-    # Load dataset
-    logger.info("Loading and preprocessing data ...")
-    train_dataset = datasets.ImageFolder(root= config['data_dir']+"/train", transform=transform)
-    val_dataset = datasets.ImageFolder(root=config['data_dir']+"/val", transform=transform)
+## Training Loop
+def run_epoch(loader, train=True):
+    model.train() if train else model.eval()
+    arcface.train() if train else arcface.eval()
 
-    logger.info("{} samples may be used for training".format(len(train_dataset)))
-    logger.info("{} samples will be used for validation".format(len(val_dataset)))
+    total_loss, correct, total = 0, 0, 0
 
-    # Create model
-    logger.info("Creating model ...")
-    model = VisionTransformer(
-            image_size=config['image_size'],
-            patch_size=config['patch_size'],
-            num_layers=config['num_layers'],
-            num_heads=config['num_heads'],
-            hidden_dim=config['hidden_dim'],
-            mlp_dim=config['mlp_dim'],
-            num_classes=config['num_classes']
-        )
-    
-    logger.info("Model:\n{}".format(model))
-    logger.info("Total number of parameters: {}".format(utils.count_parameters(model)))
-    logger.info("Trainable parameters: {}".format(utils.count_parameters(model, trainable=True)))
-    
-    # Initialize optimizer
+    for imgs, labels in tqdm(loader):
+        imgs, labels = imgs.to(DEVICE), labels.to(DEVICE)
 
-    if config['global_reg']:
-        weight_decay = config['l2_reg']
-        output_reg = None
-    else:
-        weight_decay = 0
-        output_reg = config['l2_reg']
+        if train:
+            optimizer.zero_grad()
 
-    optim_class = get_optimizer(config['optimizer'])
-    optimizer = optim_class(model.parameters(), lr=config['lr'], weight_decay=weight_decay)
+        emb = model(imgs)
+        logits = arcface(emb, labels)
+        loss = criterion(logits, labels)
 
-    start_epoch = 0
-    lr_step = 0  # current step index of `lr_step`
-    lr = config['lr']  # current learning step
-    # Load model and optimizer state
-    if args.load_model:
-        model, optimizer, start_epoch = utils.load_model(model, config['load_model'], optimizer, config['resume'],
-                                                         config['change_output'],
-                                                         config['lr'],
-                                                         config['lr_step'],
-                                                         config['lr_factor'])
-    
-    model.to(device)
+        if train:
+            loss.backward()
+            optimizer.step()
 
-    # # Using multiple gpus if available
-    # model = torch.nn.DataParallel(model)
-    # model.to(device)
+        total_loss += loss.item() * imgs.size(0)
+        preds = logits.argmax(dim=1)
+        correct += (preds == labels).sum().item()
+        total += labels.size(0)
 
-    loss_module = get_loss_module(config)
+    return total_loss / total, correct / total
 
-    # Create DataLoaders
-    train_loader = DataLoader(dataset=train_dataset,
-                            batch_size=config['batch_size'],  # number of images per batch
-                            shuffle=True,   # shuffle for training
-                            drop_last=True,
-                            num_workers=config['num_workers'])  # adjust for your CPU
+## Train
+for epoch in range(EPOCHS):
+    train_loss, train_acc = run_epoch(train_loader, train=True)
+    val_loss, val_acc = run_epoch(val_loader, train=False)
 
-    val_loader = DataLoader(dataset=val_dataset,
-                            batch_size=config['batch_size'],
-                            shuffle=False,
-                            drop_last=True,
-                            num_workers=config['num_workers'])
+    print(f"Epoch {epoch+1:02d} | "
+          f"Train Loss: {train_loss:.4f} Acc: {train_acc:.4f} | "
+          f"Val Loss: {val_loss:.4f} Acc: {val_acc:.4f}")
 
-    # Example: iterate over one batch
-    for images, labels in train_loader:
-        print(f"Image batch shape: {images.shape}")
-        print(f"Label batch shape: {labels.shape}")
-        break
+    torch.save(model.state_dict(), "finger_vit.pth")
 
-    trainer = SupervisedRunner(model, train_loader, device, loss_module, optimizer, l2_reg=output_reg,
-                                 print_interval=config['print_interval'], console=config['console'])
-    
-    val_evaluator = SupervisedRunner(model, val_loader, device, loss_module,
-                                       print_interval=config['print_interval'], console=config['console'])
-    
-    tensorboard_writer = SummaryWriter(config['tensorboard_dir'])
+# ## Verification
+# model.eval()
 
-    best_value = 1e16 if config['key_metric'] in NEG_METRICS else -1e16  # initialize with +inf or -inf depending on key metric
-    metrics = []  # (for validation) list of lists: for each epoch, stores metrics like loss, ...
-    best_metrics = {}
+# img1, img2 = ...   # load two fingerprints
+# e1 = model(img1.unsqueeze(0).to(DEVICE))
+# e2 = model(img2.unsqueeze(0).to(DEVICE))
 
-    # Evaluate on validation before training
-    aggr_metrics_val, best_metrics, best_value = validate(val_evaluator, tensorboard_writer, config, best_metrics,
-                                                          best_value, epoch=0)
-    metrics_names, metrics_values = zip(*aggr_metrics_val.items())
-    metrics.append(list(metrics_values))
-
-    logger.info('Starting training...')
-    for epoch in tqdm(range(start_epoch + 1, config["epochs"] + 1), desc='Training Epoch', leave=False):
-        mark = epoch if config['save_all'] else 'last'
-        epoch_start_time = time.time()
-        aggr_metrics_train = trainer.train_epoch(epoch)  # dictionary of aggregate epoch metrics
-        epoch_runtime = time.time() - epoch_start_time
-        print()
-        print_str = 'Epoch {} Training Summary: '.format(epoch)
-        for k, v in aggr_metrics_train.items():
-            tensorboard_writer.add_scalar('{}/train'.format(k), v, epoch)
-            print_str += '{}: {:8f} | '.format(k, v)
-        logger.info(print_str)
-        logger.info("Epoch runtime: {} hours, {} minutes, {} seconds\n".format(*utils.readable_time(epoch_runtime)))
-        total_epoch_time += epoch_runtime
-        avg_epoch_time = total_epoch_time / (epoch - start_epoch)
-        avg_batch_time = avg_epoch_time / len(train_loader)
-        avg_sample_time = avg_epoch_time / len(train_dataset)
-        logger.info("Avg epoch train. time: {} hours, {} minutes, {} seconds".format(*utils.readable_time(avg_epoch_time)))
-        logger.info("Avg batch train. time: {} seconds".format(avg_batch_time))
-        logger.info("Avg sample train. time: {} seconds".format(avg_sample_time))
-
-        # evaluate if first or last epoch or at specified interval
-        if (epoch == config["epochs"]) or (epoch == start_epoch + 1) or (epoch % config['val_interval'] == 0):
-            aggr_metrics_val, best_metrics, best_value = validate(val_evaluator, tensorboard_writer, config,
-                                                                  best_metrics, best_value, epoch)
-            metrics_names, metrics_values = zip(*aggr_metrics_val.items())
-            metrics.append(list(metrics_values))
-
-        utils.save_model(os.path.join(config['save_dir'], 'model_{}.pth'.format(mark)), epoch, model, optimizer)
-
-        # Learning rate scheduling
-        if epoch == config['lr_step'][lr_step]:
-            utils.save_model(os.path.join(config['save_dir'], 'model_{}.pth'.format(epoch)), epoch, model, optimizer)
-            lr = lr * config['lr_factor'][lr_step]
-            if lr_step < len(config['lr_step']) - 1:  # so that this index does not get out of bounds
-                lr_step += 1
-            logger.info('Learning rate updated to: ', lr)
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = lr
-
-if __name__ == '__main__':
-     
-     args = Options().parse()
-     config = setup(args)
-     main(config)
+# sim = torch.cosine_similarity(e1, e2)
+# print("Similarity:", sim.item())
