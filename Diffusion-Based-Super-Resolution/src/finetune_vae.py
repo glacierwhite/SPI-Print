@@ -6,11 +6,11 @@ import torch
 ## Load the VAE
 
 # Choose the Stable Diffusion version
-vae_model_id = "stabilityai/stable-diffusion-3.5-large"  # or sd-2-1, sd-3-5, etc.
+vae_model_id = "runwayml/stable-diffusion-v1-5"  # or sd-2-1, sd-3-5, etc.
 
 # Load only the VAE
 vae = AutoencoderKL.from_pretrained(vae_model_id, subfolder="vae")
-vae = vae.to("cuda:7")  # move to GPU if available
+vae = vae.to("cuda:3")  # move to GPU if available
 
 ## Prepare the dataset
 dataset = ImageDataset("./data/train/Papaya")
@@ -24,7 +24,7 @@ criterion = torch.nn.MSELoss()
 vae.train()
 for epoch in range(10):  # adjust epochs
     for batch in dataloader:
-        batch = batch.to("cuda:7")
+        batch = batch.to("cuda:3")
         
         # Encode and decode
         latents = vae.encode(batch).latent_dist.sample()  # shape [B, C, H/8, W/8]
@@ -32,6 +32,7 @@ for epoch in range(10):  # adjust epochs
         
         # Compute loss
         loss = criterion(recon, batch)
+        print("Epoch:",epoch," Loss:",loss.item())
         
         # Backprop
         optimizer.zero_grad()
@@ -39,3 +40,6 @@ for epoch in range(10):  # adjust epochs
         optimizer.step()
     
     print(f"Epoch {epoch} Loss: {loss.item():.4f}")
+
+## Save the fine-tuned VAE
+vae.save_pretrained("fine_tuned_vae")
