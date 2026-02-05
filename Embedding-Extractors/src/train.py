@@ -4,7 +4,7 @@ if './' not in sys.path:
 
 import torch
 import torch.nn as nn
-from models.fingervit import FingerViT
+from models.fingerprint_vit import FingerViT
 from models.arcface import ArcFace
 from dataset import FingerprintDataset
 from torch.utils.data import DataLoader
