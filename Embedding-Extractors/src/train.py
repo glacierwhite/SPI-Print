@@ -16,14 +16,14 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 BATCH = 64
 EPOCHS = 50
 LR = 3e-4
-EMB_DIM = 512
+EMB_DIM = 64
 
 ## Build data
 train_set = FingerprintDataset("./data/train", train=True)
 val_set   = FingerprintDataset("./data/val", train=False)
 
-train_loader = DataLoader(train_set, batch_size=64, shuffle=True, num_workers=4)
-val_loader   = DataLoader(val_set, batch_size=64, shuffle=False)
+train_loader = DataLoader(train_set, batch_size=BATCH, shuffle=True, num_workers=4)
+val_loader   = DataLoader(val_set, batch_size=BATCH, shuffle=False)
 
 NUM_CLASSES = len(train_set.id_map)
 
@@ -67,6 +67,7 @@ def run_epoch(loader, train=True):
     return total_loss / total, correct / total
 
 ## Train
+best_acc = 0
 for epoch in range(EPOCHS):
     train_loss, train_acc = run_epoch(train_loader, train=True)
     val_loss, val_acc = run_epoch(val_loader, train=False)
@@ -74,8 +75,10 @@ for epoch in range(EPOCHS):
     print(f"Epoch {epoch+1:02d} | "
           f"Train Loss: {train_loss:.4f} Acc: {train_acc:.4f} | "
           f"Val Loss: {val_loss:.4f} Acc: {val_acc:.4f}")
-
-    torch.save(model.state_dict(), "finger_vit.pth")
+    
+    if val_acc > best_acc:
+        best_acc = val_acc
+        torch.save(model.state_dict(), "fingerprint_vit.pth")
 
 # ## Verification
 # model.eval()

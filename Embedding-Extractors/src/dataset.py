@@ -1,13 +1,13 @@
 import os
 import cv2
 import torch
+import random
+import numpy as np
 from torch.utils.data import Dataset
 from torchvision import transforms
-import numpy as np
 
 class FingerprintDataset(Dataset):
     def __init__(self, root, train=True):
-        self.root = root
         self.train = train
         self.samples = []
         self.id_map = {}
@@ -23,9 +23,15 @@ class FingerprintDataset(Dataset):
         self.aug = transforms.Compose([
             transforms.ToPILImage(),
             transforms.RandomRotation(10),
-            transforms.RandomResizedCrop(64, scale=(0.9, 1.0)),
-            transforms.ColorJitter(0.2, 0.2),
-            transforms.ToTensor()
+            transforms.ToTensor(),
+
+            transforms.Lambda(
+                lambda x: elastic_transform(x, alpha=25, sigma=4)
+                if random.random() < 0.5 else x
+            ),
+
+            AddGaussianNoise(0.05),
+            transforms.RandomErasing(p=0.2, scale=(0.02, 0.1)),
         ])
 
         self.norm = transforms.Normalize([0.5], [0.5])
@@ -98,3 +104,31 @@ class CapacitiveDataset(Dataset):
         x = torch.tensor(x).unsqueeze(0)  
         y = torch.tensor(y, dtype=torch.long)
         return x, y
+    
+# ---- Elastic deformation ----
+def elastic_transform(img, alpha=25, sigma=4):
+    # img: torch tensor [1, H, W]
+    img = img.squeeze(0).numpy()
+    H, W = img.shape
+
+    dx = cv2.GaussianBlur((np.random.rand(H, W) * 2 - 1),
+                          (0, 0), sigma) * alpha
+    dy = cv2.GaussianBlur((np.random.rand(H, W) * 2 - 1),
+                          (0, 0), sigma) * alpha
+
+    x, y = np.meshgrid(np.arange(W), np.arange(H))
+    map_x = (x + dx).astype(np.float32)
+    map_y = (y + dy).astype(np.float32)
+
+    out = cv2.remap(img, map_x, map_y,
+                    interpolation=cv2.INTER_LINEAR,
+                    borderMode=cv2.BORDER_REFLECT_101)
+
+    return torch.from_numpy(out).unsqueeze(0)
+
+# ---- Gaussian noise ----
+class AddGaussianNoise:
+    def __init__(self, std=0.05):
+        self.std = std
+    def __call__(self, x):
+        return x + torch.randn_like(x) * self.std

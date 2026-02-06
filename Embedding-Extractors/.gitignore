@@ -2,4 +2,4 @@ output/
 data/
 __pycache__/
 checkpoints/
-finger_vit.pth
+fingerprint_vit.pth
