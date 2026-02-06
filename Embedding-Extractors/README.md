@@ -22,6 +22,14 @@ Install PyTorch (Linux OS as an example)
     pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu126
 
 ## ☕️ : Training and Evaluation
-You can train and evaluate the model by:
+Train and evaluate the ***Fingerprint Embedding Extractor*** by:
 
-    python src/train.py
+    python src/train.py --modality fingerprint
+
+Train and evaluate the ***Measurements Embedding Extractor*** by:
+
+    python src/train.py --modality measurements
+
+Train and evaluate the ***Capacitive Embedding Extractor*** by:
+
+    python src/train.py --modality capacitive
