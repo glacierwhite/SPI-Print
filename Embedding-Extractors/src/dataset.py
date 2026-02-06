@@ -53,7 +53,7 @@ class FingerprintDataset(Dataset):
         img = self.norm(img)
         return img, label
     
-class MeasurementsDataset(torch.utils.data.Dataset):
+class MeasurementsDataset(Dataset):
     def __init__(self, root):
         self.samples = []
         self.id_map = {}
@@ -73,18 +73,17 @@ class MeasurementsDataset(torch.utils.data.Dataset):
         return x, label
     
 class CapacitiveDataset(Dataset):
-    def __init__(self, root_dir, transform=None):
-        self.root_dir = root_dir
+    def __init__(self, root, transform=None):
         self.transform = transform
         self.samples = []
         self.labels = []
         self.class_to_idx = {}
 
         # scan directories
-        classes = sorted(os.listdir(root_dir))
+        classes = sorted(os.listdir(root))
         for idx, cls in enumerate(classes):
             self.class_to_idx[cls] = idx
-            cls_dir = os.path.join(root_dir, cls)
+            cls_dir = os.path.join(root, cls)
             for fname in os.listdir(cls_dir):
                 if fname.endswith(".npy"):
                     self.samples.append(os.path.join(cls_dir, fname))

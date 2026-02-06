@@ -1,91 +1,125 @@
 import sys
 if './' not in sys.path:
 	sys.path.append('./')
+     
+import logging
+import time
+import os
+
+logging.basicConfig(format='%(asctime)s | %(levelname)s : %(message)s', level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 import torch
 import torch.nn as nn
-from models.fingerprint_vit import FingerViT
-from models.arcface import ArcFace
+from tqdm import tqdm
 from dataset import FingerprintDataset
 from torch.utils.data import DataLoader
-from tqdm import tqdm
+from torch.utils.tensorboard import SummaryWriter
+from running import setup
+from options import Options
+from models.arcface import ArcFace
+from models.fingerprint_vit import FingerViT
+from models.measurements_1d_cnn import MeasurementsCNN
+from optimizers import get_optimizer
+import utils
 
-## Hyperparmeters
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+def main(config):
+    # Add file logging besides stdout
+    file_handler = logging.FileHandler(os.path.join(config['output_dir'], 'output.log'))
+    logger.addHandler(file_handler)
 
-BATCH = 64
-EPOCHS = 50
-LR = 3e-4
-EMB_DIM = 64
+    logger.info('Running:\n{}\n'.format(' '.join(sys.argv)))  # command used to run
 
-## Build data
-train_set = FingerprintDataset("./data/train", train=True)
-val_set   = FingerprintDataset("./data/val", train=False)
+    device = torch.device('cuda' if (torch.cuda.is_available() and config['gpu'] != '-1') else 'cpu')
+    logger.info("Using device: {}".format(device))
+    if device.type == "cuda":
+        logger.info("Device index: {}".format(torch.cuda.current_device()))
 
-train_loader = DataLoader(train_set, batch_size=BATCH, shuffle=True, num_workers=4)
-val_loader   = DataLoader(val_set, batch_size=BATCH, shuffle=False)
+    EMB_DIM = 64
 
-NUM_CLASSES = len(train_set.id_map)
+    # Load dataset
+    logger.info("Loading and preprocessing data ...")
+    train_set = FingerprintDataset(root=config['data_dir']+"/train", train=True)
+    val_set   = FingerprintDataset(root=config['data_dir']+"/val", train=False)
 
-## Build model
-model = FingerViT(emb_dim=EMB_DIM).to(DEVICE)
-arcface = ArcFace(EMB_DIM, NUM_CLASSES).to(DEVICE)
+    logger.info("{} samples may be used for training".format(len(train_set)))
+    logger.info("{} samples will be used for validation".format(len(val_set)))
 
-optimizer = torch.optim.AdamW(
-    list(model.parameters()) + list(arcface.parameters()),
-    lr=LR, weight_decay=1e-4
-)
+    train_loader = DataLoader(train_set, batch_size=config['batch_size'], shuffle=True, num_workers=4)
+    val_loader   = DataLoader(val_set, batch_size=config['batch_size'], shuffle=False)
 
-criterion = nn.CrossEntropyLoss()
+    NUM_CLASSES = len(train_set.id_map)
 
-## Training Loop
-def run_epoch(loader, train=True):
-    model.train() if train else model.eval()
-    arcface.train() if train else arcface.eval()
+    # Create model
+    logger.info("Creating model ...")
+    model = FingerViT(emb_dim=EMB_DIM).to(device)
+    arcface = ArcFace(EMB_DIM, NUM_CLASSES).to(device)
 
-    total_loss, correct, total = 0, 0, 0
+    logger.info("Model:\n{}".format(model))
+    logger.info("Total number of parameters: {}".format(utils.count_parameters(model)))
+    logger.info("Trainable parameters: {}".format(utils.count_parameters(model, trainable=True)))
 
-    for imgs, labels in tqdm(loader):
-        imgs, labels = imgs.to(DEVICE), labels.to(DEVICE)
+    # Initialize optimizer
+    optimizer = torch.optim.AdamW(
+         list(model.parameters()) + list(arcface.parameters()),
+         lr=config['lr'], weight_decay=config['weight_decay']
+    )
 
-        if train:
-            optimizer.zero_grad()
+    criterion = nn.CrossEntropyLoss()
 
-        emb = model(imgs)
-        logits = arcface(emb, labels)
-        loss = criterion(logits, labels)
+    ## Training Loop
+    def run_epoch(loader, train=True):
+        model.train() if train else model.eval()
+        arcface.train() if train else arcface.eval()
 
-        if train:
-            loss.backward()
-            optimizer.step()
+        total_loss, correct, total = 0, 0, 0
 
-        total_loss += loss.item() * imgs.size(0)
-        preds = logits.argmax(dim=1)
-        correct += (preds == labels).sum().item()
-        total += labels.size(0)
+        for data, labels in tqdm(loader):
+            data, labels = data.to(device), labels.to(device)
 
-    return total_loss / total, correct / total
+            if train:
+                optimizer.zero_grad()
 
-## Train
-best_acc = 0
-for epoch in range(EPOCHS):
-    train_loss, train_acc = run_epoch(train_loader, train=True)
-    val_loss, val_acc = run_epoch(val_loader, train=False)
+            emb = model(data)
+            logits = arcface(emb, labels)
+            loss = criterion(logits, labels)
 
-    print(f"Epoch {epoch+1:02d} | "
-          f"Train Loss: {train_loss:.4f} Acc: {train_acc:.4f} | "
-          f"Val Loss: {val_loss:.4f} Acc: {val_acc:.4f}")
-    
-    if val_acc > best_acc:
-        best_acc = val_acc
-        torch.save(model.state_dict(), "fingerprint_vit.pth")
+            if train:
+                loss.backward()
+                optimizer.step()
 
-# ## Verification
-# model.eval()
+            total_loss += loss.item() * data.size(0)
+            preds = logits.argmax(dim=1)
+            correct += (preds == labels).sum().item()
+            total += labels.size(0)
 
-# img1, img2 = ...   # load two fingerprints
-# e1 = model(img1.unsqueeze(0).to(DEVICE))
-# e2 = model(img2.unsqueeze(0).to(DEVICE))
+        return total_loss / total, correct / total
 
-# sim = torch.cosine_similarity(e1, e2)
-# print("Similarity:", sim.item())
+    ## Train
+    best_acc = 0
+    for epoch in range(config["epochs"]):
+        train_loss, train_acc = run_epoch(train_loader, train=True)
+        val_loss, val_acc = run_epoch(val_loader, train=False)
+
+        print(f"Epoch {epoch+1:02d} | "
+            f"Train Loss: {train_loss:.4f} Acc: {train_acc:.4f} | "
+            f"Val Loss: {val_loss:.4f} Acc: {val_acc:.4f}")
+        
+        if val_acc > best_acc:
+            best_acc = val_acc
+            torch.save(model.state_dict(), "fingerprint_vit.pth")
+
+    # ## Verification
+    # model.eval()
+
+    # img1, img2 = ...   # load two fingerprints
+    # e1 = model(img1.unsqueeze(0).to(DEVICE))
+    # e2 = model(img2.unsqueeze(0).to(DEVICE))
+
+    # sim = torch.cosine_similarity(e1, e2)
+    # print("Similarity:", sim.item())
+
+if  __name__ == "__main__":
+     args = Options().parse()
+     config = setup(args)
+     main(config)
