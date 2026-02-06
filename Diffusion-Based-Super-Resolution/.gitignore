@@ -1,4 +1,4 @@
-output/
 data/
+output/
 __pycache__/
 checkpoints/
