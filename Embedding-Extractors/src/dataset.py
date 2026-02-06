@@ -6,6 +6,14 @@ import numpy as np
 from torch.utils.data import Dataset
 from torchvision import transforms
 
+def get_dataset(name):
+    if name == "fingerprint":
+        return FingerprintDataset
+    elif name == "measurements":
+        return MeasurementsDataset
+    elif name == "capacitive":
+        return CapacitiveDataset
+
 class FingerprintDataset(Dataset):
     def __init__(self, root, train=True):
         self.train = train

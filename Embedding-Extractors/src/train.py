@@ -12,18 +12,18 @@ logger = logging.getLogger(__name__)
 import torch
 import torch.nn as nn
 from tqdm import tqdm
-from dataset import FingerprintDataset
+from dataset import get_dataset
 from torch.utils.data import DataLoader
-from torch.utils.tensorboard import SummaryWriter
 from running import setup
 from options import Options
 from models.arcface import ArcFace
 from models.fingerprint_vit import FingerViT
 from models.measurements_1d_cnn import MeasurementsCNN
-from optimizers import get_optimizer
 import utils
 
 def main(config):
+    total_epoch_time = 0
+
     # Add file logging besides stdout
     file_handler = logging.FileHandler(os.path.join(config['output_dir'], 'output.log'))
     logger.addHandler(file_handler)
@@ -39,8 +39,9 @@ def main(config):
 
     # Load dataset
     logger.info("Loading and preprocessing data ...")
-    train_set = FingerprintDataset(root=config['data_dir']+"/train", train=True)
-    val_set   = FingerprintDataset(root=config['data_dir']+"/val", train=False)
+    dataset_class = get_dataset(config['modality'])
+    train_set = dataset_class(root=config['data_dir']+"/"+config['modality']+"/train", train=True)
+    val_set   = dataset_class(root=config['data_dir']+"/"+config['modality']+"/val", train=False)
 
     logger.info("{} samples may be used for training".format(len(train_set)))
     logger.info("{} samples will be used for validation".format(len(val_set)))
@@ -95,19 +96,20 @@ def main(config):
 
         return total_loss / total, correct / total
 
-    ## Train
+    # Train
     best_acc = 0
+    logger.info('Starting training...')
     for epoch in range(config["epochs"]):
         train_loss, train_acc = run_epoch(train_loader, train=True)
         val_loss, val_acc = run_epoch(val_loader, train=False)
 
-        print(f"Epoch {epoch+1:02d} | "
+        logger.info(f"Epoch {epoch+1:02d} | "
             f"Train Loss: {train_loss:.4f} Acc: {train_acc:.4f} | "
             f"Val Loss: {val_loss:.4f} Acc: {val_acc:.4f}")
         
         if val_acc > best_acc:
             best_acc = val_acc
-            torch.save(model.state_dict(), "fingerprint_vit.pth")
+            torch.save(model.state_dict(), "checkpoints/"+model.__class__.__name__+".pth")
 
     # ## Verification
     # model.eval()

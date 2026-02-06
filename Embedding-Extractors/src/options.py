@@ -47,12 +47,9 @@ class Options(object):
         self.parser.add_argument('--seed',
                                  help='Seed used for splitting sets. None by default, set to an integer for reproducibility')
         # Training process
-        self.parser.add_argument('--task', choices={"imputation", "transduction", "classification", "regression"},
-                                 default="classification",
-                                 help=("Training objective/task: imputation of masked values,\n"
-                                       "                          transduction of features to other features,\n"
-                                       "                          classification of entire time series,\n"
-                                       "                          regression of scalar(s) for entire time series"))
+        self.parser.add_argument('--modality', choices={"fingerprint", "measurements", "capacitive"},
+                                 default="fingerprint",
+                                 help=("The modality of the embedding extractor."))
         self.parser.add_argument('--epochs', type=int, default=50,
                                  help='Number of training epochs')
         self.parser.add_argument('--val_interval', type=int, default=2,

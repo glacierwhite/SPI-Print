@@ -1,5 +1,4 @@
-output/
 data/
+output/
 __pycache__/
 checkpoints/
-fingerprint_vit.pth
