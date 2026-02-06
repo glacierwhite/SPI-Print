@@ -15,18 +15,13 @@ We develop our ***Capacitive Embedding Extractor*** based on an MLP, which treat
 First create a new conda environment
 
     conda env create -f environment.yml
-    conda activate vit
+    conda activate embedding
 
 Install PyTorch (Linux OS as an example)
 
     pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu126
 
-## ☕️ : Training
-You can train the model by:
+## ☕️ : Training and Evaluation
+You can train and evaluate the model by:
 
     python src/train.py
-
-## 💻 : Test
-You can test the model by:
-
-    python src/test.py --load_model ./checkpoints/model_best.pth
