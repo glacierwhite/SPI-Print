@@ -1,4 +1,4 @@
-## Fingerprint Embedding Extractor
+## Fingerprint/Measurements/Capacitive Embedding Extractor
 
 ## 💡 : Method
 <!-- <div align="center">
