@@ -2,11 +2,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class CapacitiveMLP(nn.Module):
-    def __init__(self, input_dim=64, embedding_dim=32):
+    def __init__(self, input_dim=64, emb_dim=32):
         super().__init__()
         self.fc1 = nn.Linear(input_dim, 128)
         self.fc2 = nn.Linear(128, 256)
-        self.fc3 = nn.Linear(256, embedding_dim)
+        self.fc3 = nn.Linear(256, emb_dim)
         
     def forward(self, x):
         x = x.view(x.size(0),-1)

@@ -16,9 +16,7 @@ from dataset import get_dataset
 from torch.utils.data import DataLoader
 from running import setup
 from options import Options
-from models.arcface import ArcFace
-from models.fingerprint_vit import FingerViT
-from models.measurements_1d_cnn import MeasurementsCNN
+from models.extractor import Extractor
 import utils
 
 def main(config):
@@ -34,8 +32,6 @@ def main(config):
     logger.info("Using device: {}".format(device))
     if device.type == "cuda":
         logger.info("Device index: {}".format(torch.cuda.current_device()))
-
-    EMB_DIM = 64
 
     # Load dataset
     logger.info("Loading and preprocessing data ...")
@@ -53,8 +49,7 @@ def main(config):
 
     # Create model
     logger.info("Creating model ...")
-    model = FingerViT(emb_dim=EMB_DIM).to(device)
-    arcface = ArcFace(EMB_DIM, NUM_CLASSES).to(device)
+    model = Extractor(config['modality'], NUM_CLASSES).to(device)
 
     logger.info("Model:\n{}".format(model))
     logger.info("Total number of parameters: {}".format(utils.count_parameters(model)))
@@ -62,7 +57,7 @@ def main(config):
 
     # Initialize optimizer
     optimizer = torch.optim.AdamW(
-         list(model.parameters()) + list(arcface.parameters()),
+         list(model.parameters()),
          lr=config['lr'], weight_decay=config['weight_decay']
     )
 
@@ -71,7 +66,6 @@ def main(config):
     ## Training Loop
     def run_epoch(loader, train=True):
         model.train() if train else model.eval()
-        arcface.train() if train else arcface.eval()
 
         total_loss, correct, total = 0, 0, 0
 
@@ -81,8 +75,7 @@ def main(config):
             if train:
                 optimizer.zero_grad()
 
-            emb = model(data)
-            logits = arcface(emb, labels)
+            logits = model(data, labels)
             loss = criterion(logits, labels)
 
             if train:
@@ -109,7 +102,7 @@ def main(config):
         
         if val_acc > best_acc:
             best_acc = val_acc
-            torch.save(model.state_dict(), "checkpoints/"+model.__class__.__name__+".pth")
+            torch.save(model.state_dict(), "checkpoints/"+model.backbone.__class__.__name__+".pth")
 
     # ## Verification
     # model.eval()

@@ -6,12 +6,12 @@ import numpy as np
 from torch.utils.data import Dataset
 from torchvision import transforms
 
-def get_dataset(name):
-    if name == "fingerprint":
+def get_dataset(modality):
+    if modality == "fingerprint":
         return FingerprintDataset
-    elif name == "measurements":
+    elif modality == "measurements":
         return MeasurementsDataset
-    elif name == "capacitive":
+    elif modality == "capacitive":
         return CapacitiveDataset
 
 class FingerprintDataset(Dataset):
